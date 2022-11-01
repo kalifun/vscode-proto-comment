@@ -1,17 +1,37 @@
-import { stringify } from 'querystring';
 import vscode = require('vscode');
+import { findContent } from './find';
 
 export type CodeCtx = {
     editor: vscode.TextEditor,
     line: number,
     content: string,
-
 };
 
 
 export function genComment(ctx: CodeCtx) {
     let lines = ctx.content.split("\n");
 
+    // current line
+    let currentLineCtx = lines[ctx.line];
+
+    // If the current row satisfies
+    let currentRow = findContent(currentLineCtx);
+
+
+    if (currentRow !== null) {
+        // Get the previous line
+        let previousLine = lines[ctx.line - 1];
+        replaceCtx(ctx, {
+            annotation: true,
+            currentLine: ctx.line,
+            currentLineCtx: currentLineCtx,
+            previous: previousLine,
+            comment: currentRow
+        });
+        return;
+    }
+
+    // 需要考虑用户是采用的当前行 所以不需要考虑下一行
     let nextLineContent = lines[ctx.line + 1];
 
     if (RegExp("^\\s*$").test(nextLineContent)) {
@@ -19,60 +39,47 @@ export function genComment(ctx: CodeCtx) {
     }
 
     // Try to determine which type it belongs to
-    let res = findMessage(nextLineContent);
+    let res = findContent(nextLineContent);
     if (res !== null) {
-        let len = res.length;
-        ctx.editor.edit(editBuilder => {
-            editBuilder.replace(new vscode.Range(
-                new vscode.Position(ctx.line, 0),
-                new vscode.Position(ctx.line, len)), String(res));
+        replaceCtx(ctx, {
+            annotation: false,
+            currentLine: ctx.line,
+            currentLineCtx: currentLineCtx,
+            previous: nextLineContent,
+            comment: res
         });
-
         return;
     }
 
 }
 
 
-export function getLineEndOffset(lines: string[], line: number): number {
-    let offset = 0;
-
-    for (let index = 0; index < lines.length; index++) {
-        const element = lines[index];
-        offset += element.length + 1;
-        if (index >= line) {
-            return offset;
-        }
-    }
-    return offset;
-}
+type input = {
+    annotation: boolean,
+    currentLine: number,
+    currentLineCtx: string,
+    previous: string,
+    comment: string
+};
 
 
-
-export function getLineStartOffset(lines: string[], line: number): number {
-    let offset = 0;
-
-    for (let index = 0; index < lines.length; index++) {
-        const element = lines[index];
-        if (index >= line) {
-            return offset;
-        }
-
-        offset += element.length + 1;
-
+function replaceCtx(ctx: CodeCtx, input: input) {
+    if (RegExp(".*\\*/\\s*$").test(input.previous)) {
+        return;
     }
 
-    return offset;
-}
-
-
-
-function findMessage(content: string): string | null {
-    const msgRegex = RegExp("^\\s*message\\s*(\\w+)\\s*\\{");
-    const mgsComment = "// @desc: Message Description";
-    let msg = msgRegex.test(content);
-    if (msg) {
-        return mgsComment;
+    if (RegExp("^\\s*//.*").test(input.previous)) {
+        return;
     }
-    return null;
+
+    let val = new vscode.SnippetString;
+    if (input.annotation) {
+        val = new vscode.SnippetString("\n" + input.comment);
+        ctx.editor.insertSnippet(val, new vscode.Position(input.currentLine - 1, input.currentLineCtx.length));
+    } else {
+        val = new vscode.SnippetString(input.comment);
+        ctx.editor.insertSnippet(val, new vscode.Position(input.currentLine, input.previous.length));
+    }
+    return;
 }
+
